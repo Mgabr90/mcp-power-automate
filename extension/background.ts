@@ -745,7 +745,15 @@ const handleApiRequest = async (
 
   if (token) {
     if (details.url.includes('.api.powerplatform.com/')) {
-      tabState.apiUrl = buildBaseUrl(details.url);
+      // Only the per-environment host serves the flow and connectivity APIs. The
+      // portal also calls *.tenant.api.powerplatform.com — the Connections page
+      // does — and letting that overwrite apiUrl pointed every later request at a
+      // host that answers "EndpointInvalid". Keep promoting the token either way,
+      // it is the same audience; just never move apiUrl off the environment host.
+      if (details.url.includes('.environment.api.powerplatform.com/')) {
+        tabState.apiUrl = buildBaseUrl(details.url);
+      }
+
       await maybePromoteApiToken(tabState, token, 'request-header');
     }
 

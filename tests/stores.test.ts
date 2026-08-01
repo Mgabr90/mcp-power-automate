@@ -251,4 +251,15 @@ describe('stores', () => {
     expect(isAllowedPostContentType('multipart/form-data')).toBe(false);
     expect(isAllowedPostContentType(undefined)).toBe(false);
   });
+
+  it('distinguishes the environment Power Platform host from the tenant one', async () => {
+    const { isEnvironmentApiUrl } = await import('../server/dataverse-solutions.js');
+
+    expect(isEnvironmentApiUrl('https://default8cb1.84.environment.api.powerplatform.com/')).toBe(true);
+    // The Connections page calls this one; it answers EndpointInvalid for flow APIs.
+    expect(isEnvironmentApiUrl('https://8cb1.84.tenant.api.powerplatform.com/')).toBe(false);
+    expect(isEnvironmentApiUrl('https://api.flow.microsoft.com/')).toBe(false);
+    expect(isEnvironmentApiUrl(null)).toBe(false);
+    expect(isEnvironmentApiUrl(undefined)).toBe(false);
+  });
 });

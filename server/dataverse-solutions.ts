@@ -925,6 +925,17 @@ export const migrateFlowToSolution = async ({
   };
 };
 
+/**
+ * Only `*.environment.api.powerplatform.com` serves the flow and connectivity
+ * APIs. The maker portal also calls `*.tenant.api.powerplatform.com` — opening
+ * the Connections page does — and the extension used to let that overwrite
+ * `session.apiUrl`, after which every derived endpoint came back
+ * `400 EndpointInvalid`. Guard here too so a stale capture fails with an
+ * actionable message instead of an opaque gateway error.
+ */
+export const isEnvironmentApiUrl = (apiUrl: string | null | undefined) =>
+  typeof apiUrl === 'string' && /\.environment\.api\.powerplatform\.com/i.test(apiUrl);
+
 // List connections in the environment via the per-environment Power
 // Platform API (the same call the maker portal's Connections page makes,
 // captured via Playwright). Endpoint shape:
@@ -942,6 +953,16 @@ export const listConnections = async ({ envId, connectorApiName }: ListConnectio
         `No captured session.apiUrl available; needed for the per-environment ` +
         `Power Platform connectivity endpoint. Open a Power Automate flow in the ` +
         `browser with the extension enabled to capture one.`,
+      retryable: true,
+    });
+  }
+  if (!isEnvironmentApiUrl(apiUrl)) {
+    throw new PowerAutomateError({
+      code: 'INVALID_REQUEST',
+      message:
+        `The captured session.apiUrl (${apiUrl}) is not a per-environment Power ` +
+        `Platform host, so the derived endpoint would be rejected. Open a flow ` +
+        `page in the browser to recapture the environment endpoint.`,
       retryable: true,
     });
   }
