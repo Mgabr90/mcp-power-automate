@@ -230,4 +230,25 @@ describe('stores', () => {
 
     expect(selectedWorkTabStore.getSelectedWorkTab()).toBeNull();
   });
+
+  it('rejects web-page origins and allows the extension and local callers', async () => {
+    const { isAllowedOrigin } = await import('../server/index.js');
+
+    expect(isAllowedOrigin(undefined)).toBe(true);
+    expect(isAllowedOrigin('chrome-extension://abcdefghijklmnopabcdefghijklmnop')).toBe(true);
+    expect(isAllowedOrigin('https://evil.example')).toBe(false);
+    expect(isAllowedOrigin('https://make.powerautomate.com')).toBe(false);
+    expect(isAllowedOrigin('http://127.0.0.1:17373')).toBe(false);
+  });
+
+  it('only accepts application/json on POST so text/plain cannot skip preflight', async () => {
+    const { isAllowedPostContentType } = await import('../server/index.js');
+
+    expect(isAllowedPostContentType('application/json')).toBe(true);
+    expect(isAllowedPostContentType('application/json; charset=utf-8')).toBe(true);
+    expect(isAllowedPostContentType('APPLICATION/JSON')).toBe(true);
+    expect(isAllowedPostContentType('text/plain')).toBe(false);
+    expect(isAllowedPostContentType('multipart/form-data')).toBe(false);
+    expect(isAllowedPostContentType(undefined)).toBe(false);
+  });
 });

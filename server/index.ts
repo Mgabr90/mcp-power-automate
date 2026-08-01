@@ -50,12 +50,32 @@ import { getLastUpdate, loadLastUpdate } from './update-history-store.js';
 const mcpServer = createMcpApp();
 let ownsBridgeServer = false;
 
+// Only the extension may drive the bridge from a browser. A wildcard ACAO let any
+// page the user visited reach every mutating route -- and because the handlers
+// ignored Content-Type, a `text/plain` POST was a CORS *simple* request, so not
+// even a preflight stood in the way. That exposed /revert-last-update (pushes a
+// flow change into the tenant) and /session (injects an attacker-controlled
+// apiUrl, so later flow reads and writes go to their host).
+//
+// Requests with no Origin at all are local non-browser callers (the MCP process,
+// curl, tests) and stay allowed -- the bridge binds to loopback only.
+export const isAllowedOrigin = (origin: string | undefined) =>
+  origin === undefined || origin === 'null' || origin.startsWith('chrome-extension://');
+
+// A browser will not let a page send application/json cross-origin without a
+// preflight, so requiring it closes the simple-request bypass even if an Origin
+// check is ever loosened.
+export const isAllowedPostContentType = (contentType: string | undefined) =>
+  typeof contentType === 'string' && contentType.split(';')[0]?.trim().toLowerCase() === 'application/json';
+
+// Access-Control-Allow-Origin is set per request via setHeader before routing, so
+// it is echoed back only for the extension and never wildcarded.
 const sendJson = (response: ServerResponse, statusCode: number, payload: unknown) => {
   response.writeHead(statusCode, {
     'Access-Control-Allow-Headers': 'content-type',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Origin': '*',
     'Content-Type': 'application/json; charset=utf-8',
+    Vary: 'Origin',
   });
   response.end(`${JSON.stringify(payload, null, 2)}\n`);
 };
@@ -143,9 +163,26 @@ export const createBridgeServer = () =>
       }
 
       const requestUrl = new URL(request.url, `http://${bridgeHost}:${bridgePort}`);
+      const origin = request.headers.origin;
+
+      if (!isAllowedOrigin(origin)) {
+        sendJson(response, 403, { error: 'Origin is not allowed to use the bridge.' } satisfies BridgeErrorResponse);
+        return;
+      }
+
+      if (origin) {
+        response.setHeader('Access-Control-Allow-Origin', origin);
+      }
 
       if (request.method === 'OPTIONS') {
         sendJson(response, 204, { ok: true });
+        return;
+      }
+
+      if (request.method === 'POST' && !isAllowedPostContentType(request.headers['content-type'])) {
+        sendJson(response, 415, {
+          error: 'Bridge POST requests must use Content-Type: application/json.',
+        } satisfies BridgeErrorResponse);
         return;
       }
 

@@ -80,7 +80,9 @@ type ProbeState = {
         source: BRIDGE_SIGNAL,
         type: 'flow-snapshot',
       } satisfies RuntimeMessage,
-      '*',
+      // Never '*': this probe runs in page context, so a wildcard target origin
+      // hands the payload to every other script on the page.
+      window.location.origin,
     );
   };
 
@@ -245,7 +247,9 @@ type ProbeState = {
                   token: `Bearer ${result.accessToken}`,
                   type: 'token-from-msal',
                 } satisfies RuntimeMessage,
-                '*',
+                // A wildcard here broadcast a live bearer token to every script
+                // running on the page, including injected third-party ones.
+                window.location.origin,
               );
             } catch {
               // Ignore silent auth failures and keep trying other clients/scopes.
