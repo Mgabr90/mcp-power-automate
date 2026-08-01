@@ -929,16 +929,29 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
     const selectPromise =
       typeof targetTabId === 'number' ?
         postSelectWorkTabForBridge(targetTabId)
-      : queryTabs({ active: true, currentWindow: true }).then(([tab]) => {
+      : findActivePowerAutomateTab().then((tab) => {
           if (!tab?.id) {
-            throw new Error('No active browser tab was found.');
+            throw new Error('No open Power Automate tab was found. Open a flow page and try again.');
           }
 
           return postSelectWorkTabForBridge(tab.id);
         });
 
     selectPromise
-      .then(async () => sendResponse(await getDashboard()))
+      .then(async () => {
+        // Selecting the tab only moves the active target when no target exists yet,
+        // so on its own this left the banner pointing at the previously chosen flow
+        // and the click looked like a no-op. "Use as work tab" promises to follow
+        // the open flow, so set the target from the tab as well.
+        try {
+          await syncRecentFlowIds(await postSetActiveFlowFromTabToBridge());
+        } catch {
+          // The tab selection already succeeded; keep it even when the flow is not
+          // in the catalog yet rather than failing the whole action.
+        }
+
+        sendResponse(await getDashboard());
+      })
       .catch((error) => sendResponse({ error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
