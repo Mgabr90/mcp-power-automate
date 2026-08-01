@@ -238,11 +238,21 @@ const injectProbe = () => {
   (document.head || document.documentElement).appendChild(script);
 };
 
+// Only the page probe is allowed to hand work to the background, and only these
+// two kinds. Forwarding anything that merely carried the signal let any script on
+// the page forge a session, a token, or a flow snapshot straight into the bridge.
+const PAGE_MESSAGE_TYPES = new Set(['flow-snapshot', 'token-from-msal']);
+
 const handleMessage = (event: MessageEvent) => {
   if (event.source !== window) return;
-  if (event.data?.source !== BRIDGE_SIGNAL) return;
+  if (event.origin !== window.location.origin) return;
 
-  void safeSendMessage(event.data as RuntimeMessage);
+  const data = event.data as (RuntimeMessage & { source?: string }) | undefined;
+
+  if (data?.source !== BRIDGE_SIGNAL) return;
+  if (!PAGE_MESSAGE_TYPES.has(data.type)) return;
+
+  void safeSendMessage(data);
 };
 
 const handleFocus = () => {

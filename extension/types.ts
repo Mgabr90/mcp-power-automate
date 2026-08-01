@@ -6,6 +6,7 @@ export const BRIDGE_URL = 'http://127.0.0.1:17373';
 
 export const STORAGE_KEYS = {
   activeFlow: 'mcpPowerAutomate.activeFlow',
+  bridgeInstanceId: 'mcpPowerAutomate.bridgeInstanceId',
   flowCatalog: 'mcpPowerAutomate.flowCatalog',
   lastError: 'mcpPowerAutomate.lastError',
   lastHealth: 'mcpPowerAutomate.lastHealth',

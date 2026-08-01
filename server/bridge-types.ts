@@ -105,6 +105,9 @@ export interface HealthPayload {
   hasSession: boolean;
   hasSnapshot: boolean;
   hasTokenAudit: boolean;
+  /** Changes whenever the bridge process restarts, so clients can tell that
+   * in-memory state was lost and re-send anything they were deduping. */
+  instanceId: string;
   lastRunCapturedAt: string | null;
   lastUpdateCapturedAt: string | null;
   ok: true;

@@ -188,10 +188,25 @@ const buildSessionSignature = (session: CapturedSession) =>
     tabId: session.tabId,
   });
 
+// A restarted bridge has an empty store, but maybeSendSession dedupes on an
+// unchanged session signature — so the session was never re-sent until the token
+// rotated or the tab was reloaded. Drop the dedupe cache when the identity moves.
+const noteBridgeInstance = async (instanceId: unknown) => {
+  if (typeof instanceId !== 'string' || !instanceId) return;
+
+  const stored = await getStorage([STORAGE_KEYS.bridgeInstanceId]);
+
+  if (stored[STORAGE_KEYS.bridgeInstanceId] === instanceId) return;
+
+  state.lastSentSignatures = {};
+  await setStorage({ [STORAGE_KEYS.bridgeInstanceId]: instanceId });
+};
+
 const checkBridgeHealth = async () => {
   try {
     const response = await fetch(`${BRIDGE_URL}/health`);
     const body = (await response.json()) as Record<string, unknown>;
+    await noteBridgeInstance(body.instanceId);
     await setStorage({ [STORAGE_KEYS.lastHealth]: body });
     return body;
   } catch (error) {
@@ -819,7 +834,20 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders'],
 );
 
+// Messages that carry captured credentials or flow contents must come from a
+// content script running on a Power Automate page. The extension's own popup and
+// side panel never send these, so anything else claiming to is not trustworthy.
+const PAGE_SOURCED_MESSAGE_TYPES = new Set(['flow-snapshot', 'token-audit', 'token-from-storage', 'token-from-msal']);
+
+const isTrustedPageSender = (sender: chrome.runtime.MessageSender) =>
+  typeof sender?.tab?.id === 'number' && POWER_AUTOMATE_URL_PATTERN.test(sender.tab.url || '');
+
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+  if (PAGE_SOURCED_MESSAGE_TYPES.has(message?.type) && !isTrustedPageSender(sender)) {
+    sendResponse({ error: 'Rejected a captured-credential message from an untrusted sender.' });
+    return true;
+  }
+
   if (message?.type === 'flow-snapshot') {
     postSnapshotToBridge(message.payload)
       .then(async (result) => {

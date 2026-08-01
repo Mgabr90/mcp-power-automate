@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from 'node:crypto';
 import http, { type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -49,6 +50,12 @@ import { getLastUpdate, loadLastUpdate } from './update-history-store.js';
 
 const mcpServer = createMcpApp();
 let ownsBridgeServer = false;
+
+// Identifies this bridge process. The extension skips re-posting a session whose
+// signature has not changed, so a bridge restart used to leave the store empty
+// until the token rotated or the user reloaded the tab. Surfacing the identity
+// lets the extension notice the restart and re-send immediately.
+const bridgeInstanceId = randomUUID();
 
 // Only the extension may drive the bridge from a browser. A wildcard ACAO let any
 // page the user visited reach every mutating route -- and because the handlers
@@ -146,6 +153,7 @@ export const createHealthPayload = (): HealthPayload => {
     hasSnapshot: Boolean(snapshot),
     hasSession: Boolean(session),
     hasTokenAudit: Boolean(tokenAudit),
+    instanceId: bridgeInstanceId,
     lastUpdateCapturedAt: lastUpdate?.capturedAt || null,
     lastRunCapturedAt: lastRun?.capturedAt || null,
     ok: true,
