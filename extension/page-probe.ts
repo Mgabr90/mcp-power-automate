@@ -1,3 +1,4 @@
+import { addBounded } from './tab-utils.js';
 import { BRIDGE_SIGNAL, type RuntimeMessage } from './types.js';
 
 type ProbeState = {
@@ -28,6 +29,13 @@ type ProbeState = {
     });
   const seenPayloads = probeState.seenPayloads;
   const seenMsalTokens = probeState.seenMsalTokens;
+
+  // Flow definitions only ever come back from these APIs. Cloning and JSON-parsing
+  // *every* response on the page, then walking it 8 deep, was pure overhead on a
+  // designer that chats constantly — and .clone() buffers the whole body.
+  const FLOW_PAYLOAD_URL_PATTERN = /api\.flow\.microsoft\.com|api\.powerplatform\.com|\/providers\/Microsoft\.ProcessSimple\//i;
+
+  const isFlowPayloadUrl = (url: string | undefined) => Boolean(url && FLOW_PAYLOAD_URL_PATTERN.test(url));
 
   const getCurrentContext = () => {
     const flowIdMatch = window.location.href.match(/flows\/(?:shared\/)?([0-9a-f-]{36})/i);
@@ -67,7 +75,7 @@ type ProbeState = {
     });
 
     if (seenPayloads.has(signature)) return;
-    seenPayloads.add(signature);
+    addBounded(seenPayloads, signature, 200);
 
     window.postMessage(
       {
@@ -219,6 +227,26 @@ type ProbeState = {
     return candidates;
   };
 
+  const TOKEN_REFRESH_SKEW_SECONDS = 120;
+  const SEEN_MSAL_TOKEN_LIMIT = 50;
+
+  const isExpiringSoon = (accessToken: string) => {
+    try {
+      const [, payloadPart] = accessToken.split('.');
+      if (!payloadPart) return true;
+
+      const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+      const { exp } = JSON.parse(atob(padded)) as { exp?: number };
+
+      if (!exp) return true;
+
+      return exp <= Math.floor(Date.now() / 1000) + TOKEN_REFRESH_SKEW_SECONDS;
+    } catch {
+      return true;
+    }
+  };
+
   const tryAcquireMsalToken = async () => {
     const candidates = findMsalCandidates();
 
@@ -229,15 +257,28 @@ type ProbeState = {
         for (const account of accounts) {
           for (const scopes of TARGET_SCOPES) {
             try {
-              const result = await client.acquireTokenSilent({
+              // forceRefresh on every attempt meant a network round trip per
+              // scope set, per account, per client — at 1.5s, 4s, every focus and
+              // every URL change. It also returned a brand new token each time, so
+              // seenMsalTokens never deduped and grew without bound. Take the
+              // cached token and only force a refresh when it is about to expire.
+              let result = await client.acquireTokenSilent({
                 account,
-                forceRefresh: true,
+                forceRefresh: false,
                 scopes,
               });
 
+              if (!result?.accessToken || isExpiringSoon(result.accessToken)) {
+                result = await client.acquireTokenSilent({
+                  account,
+                  forceRefresh: true,
+                  scopes,
+                });
+              }
+
               if (!result?.accessToken || seenMsalTokens.has(result.accessToken)) continue;
 
-              seenMsalTokens.add(result.accessToken);
+              addBounded(seenMsalTokens, result.accessToken, SEEN_MSAL_TOKEN_LIMIT);
 
               window.postMessage(
                 {
@@ -276,13 +317,16 @@ type ProbeState = {
 
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
+      const requestUrl = resolveFetchUrl(args[0]);
+
+      if (!isFlowPayloadUrl(requestUrl)) return response;
 
       try {
         const cloned = response.clone();
         const contentType = cloned.headers.get('content-type') || '';
         if (contentType.includes('application/json')) {
           const data = await cloned.json();
-          inspectResponsePayload(data, 'fetch-response', resolveFetchUrl(args[0]));
+          inspectResponsePayload(data, 'fetch-response', requestUrl);
         }
       } catch {
         // Ignore response parsing failures.
@@ -316,12 +360,15 @@ type ProbeState = {
     XMLHttpRequest.prototype.send = function patchedSend(...args: Parameters<XMLHttpRequest['send']>) {
       this.addEventListener('load', () => {
         try {
+          const requestUrl = (this as XMLHttpRequest & { __paMcpUrl?: string }).__paMcpUrl;
+          if (!isFlowPayloadUrl(requestUrl)) return;
+
           const contentType = this.getResponseHeader('content-type') || '';
           if (!contentType.includes('application/json')) return;
           if (typeof this.responseText !== 'string' || !this.responseText) return;
 
           const data = JSON.parse(this.responseText);
-          inspectResponsePayload(data, 'xhr-response', (this as XMLHttpRequest & { __paMcpUrl?: string }).__paMcpUrl);
+          inspectResponsePayload(data, 'xhr-response', requestUrl);
         } catch {
           // Ignore response parsing failures.
         }

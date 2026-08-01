@@ -71,5 +71,18 @@ await esbuild({
   target: ['chrome120'],
 });
 await cp(path.join(extensionSourceDir, 'manifest.json'), path.join(extensionDistDir, 'manifest.json'));
+
+// Chrome rejects semver prerelease tags, so the manifest version can never be a
+// literal copy of the package version — but the numeric cores should agree, and
+// they have drifted before. Warn rather than rewrite: picking which one wins is a
+// release decision, and silently lowering the manifest version breaks upgrades.
+const packageVersion = JSON.parse(await readFile(path.join(rootDir, 'package.json'), 'utf8')).version;
+const manifestVersion = JSON.parse(await readFile(path.join(extensionSourceDir, 'manifest.json'), 'utf8')).version;
+
+if (manifestVersion !== packageVersion.split('-')[0]) {
+  console.warn(
+    `[build] version drift: extension/manifest.json is ${manifestVersion}, package.json is ${packageVersion}. Reconcile before publishing.`,
+  );
+}
 await cp(path.join(extensionSourceDir, 'popup.html'), path.join(extensionDistDir, 'popup.html'));
 await cp(path.join(extensionSourceDir, 'sidepanel.html'), path.join(extensionDistDir, 'sidepanel.html'));

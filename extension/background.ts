@@ -1,5 +1,12 @@
 import type { ContextPayload, PopupStatusPayload, PopupTokenMeta } from '../server/bridge-types.js';
 import type { CapturedSession, FlowSnapshot, LastRun, LastUpdate, Session, TokenAudit } from '../server/schemas.js';
+import {
+  PAGE_SOURCED_MESSAGE_TYPES,
+  POWER_AUTOMATE_TAB_URLS,
+  addBounded,
+  isPowerAutomateTab,
+  isTrustedPageSender,
+} from './tab-utils.js';
 import { decodeJwtPayload, isTokenExpired, scoreToken } from './token-utils.js';
 import { buildBaseUrl, extractAuthorization, extractFromApiUrl, extractFromPortalUrl } from './url-utils.js';
 import {
@@ -79,17 +86,6 @@ const queryTabs = (queryInfo: chrome.tabs.QueryInfo) =>
   new Promise<chrome.tabs.Tab[]>((resolve) => {
     chrome.tabs.query(queryInfo, resolve);
   });
-
-const POWER_AUTOMATE_URL_PATTERN = /make\.powerautomate\.com|make\.powerapps\.com|flow\.microsoft\.com/i;
-
-const POWER_AUTOMATE_TAB_URLS = [
-  '*://*.make.powerautomate.com/*',
-  '*://*.make.powerapps.com/*',
-  '*://*.flow.microsoft.com/*',
-];
-
-const isPowerAutomateTab = (tab: chrome.tabs.Tab | null | undefined) =>
-  typeof tab?.id === 'number' && POWER_AUTOMATE_URL_PATTERN.test(tab.url || '');
 
 // A service worker has no window of its own, so `currentWindow: true` resolves to
 // nothing whenever the side panel holds focus — which made every "Use as work tab"
@@ -793,12 +789,31 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders', 'extraHeaders'],
 );
 
+// A busy Dataverse page fires many requests carrying the same bearer, and each one
+// used to POST a fresh audit to the bridge. Remember what we already reported.
+const auxiliaryAudienceSeen = new Set<string>();
+const AUXILIARY_AUDIENCE_SEEN_LIMIT = 200;
+
 const handleAuxiliaryAudienceRequest = (details: ApiRequestDetails) => {
   const token = extractAuthorization(details.requestHeaders);
   if (!token) return;
   const raw = token.replace(/^Bearer\s+/i, '');
   const payload = decodeJwtPayload(raw);
   if (!payload?.aud) return;
+
+  let host: string;
+
+  try {
+    host = new URL(details.url).host;
+  } catch {
+    return;
+  }
+
+  const seenKey = `${host}|${raw}`;
+
+  if (auxiliaryAudienceSeen.has(seenKey)) return;
+  addBounded(auxiliaryAudienceSeen, seenKey, AUXILIARY_AUDIENCE_SEEN_LIMIT);
+
   const scope = payload.scp || payload.roles?.join(' ') || '';
   const audit: TokenAudit = {
     candidates: [
@@ -809,7 +824,7 @@ const handleAuxiliaryAudienceRequest = (details: ApiRequestDetails) => {
         hasFlowWrite: false,
         score: 0,
         scope,
-        source: `webRequest:${new URL(details.url).host}`,
+        source: `webRequest:${host}`,
         token,
       },
     ],
@@ -833,14 +848,6 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   },
   ['requestHeaders', 'extraHeaders'],
 );
-
-// Messages that carry captured credentials or flow contents must come from a
-// content script running on a Power Automate page. The extension's own popup and
-// side panel never send these, so anything else claiming to is not trustworthy.
-const PAGE_SOURCED_MESSAGE_TYPES = new Set(['flow-snapshot', 'token-audit', 'token-from-storage', 'token-from-msal']);
-
-const isTrustedPageSender = (sender: chrome.runtime.MessageSender) =>
-  typeof sender?.tab?.id === 'number' && POWER_AUTOMATE_URL_PATTERN.test(sender.tab.url || '');
 
 chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
   if (PAGE_SOURCED_MESSAGE_TYPES.has(message?.type) && !isTrustedPageSender(sender)) {

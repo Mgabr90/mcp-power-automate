@@ -285,7 +285,11 @@ injectProbe();
 scheduleDeepScan();
 window.addEventListener('focus', handleFocus);
 window.addEventListener('storage', handleStorage);
+// A full localStorage + sessionStorage sweep runs a token regex over every value,
+// and PA's MSAL cache is large. There is nothing new to find while the tab is in
+// the background, and `focus` already triggers a sweep on the way back.
 refreshTimer = window.setInterval(() => {
+  if (document.hidden) return;
   void reportBestToken();
-}, 30000);
+}, 60000);
 locationWatchTimer = window.setInterval(handleLocationChange, 1000);

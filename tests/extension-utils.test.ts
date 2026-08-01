@@ -180,3 +180,36 @@ describe('sendRuntimeMessage', () => {
     });
   });
 });
+
+describe('tab utils', () => {
+  it('recognises Power Automate tabs and rejects everything else', async () => {
+    const { isPowerAutomateTab } = await import('../extension/tab-utils.js');
+
+    expect(isPowerAutomateTab({ id: 1, url: 'https://make.powerautomate.com/environments/x/flows/y' })).toBe(true);
+    expect(isPowerAutomateTab({ id: 1, url: 'https://make.powerapps.com/' })).toBe(true);
+    expect(isPowerAutomateTab({ id: 1, url: 'https://unitedarabemirates.api.flow.microsoft.com/' })).toBe(true);
+    expect(isPowerAutomateTab({ id: 1, url: 'https://evil.example/' })).toBe(false);
+    // A side panel or popup has no tab id, so it can never pose as a page sender.
+    expect(isPowerAutomateTab({ url: 'https://make.powerautomate.com/' })).toBe(false);
+    expect(isPowerAutomateTab(null)).toBe(false);
+  });
+
+  it('only trusts credential messages from a Power Automate content script', async () => {
+    const { isTrustedPageSender } = await import('../extension/tab-utils.js');
+
+    expect(isTrustedPageSender({ tab: { id: 7, url: 'https://make.powerautomate.com/' } })).toBe(true);
+    expect(isTrustedPageSender({ tab: { id: 7, url: 'https://evil.example/' } })).toBe(false);
+    expect(isTrustedPageSender({})).toBe(false);
+    expect(isTrustedPageSender(undefined)).toBe(false);
+  });
+
+  it('bounds long-lived sets by dropping the oldest entries', async () => {
+    const { addBounded } = await import('../extension/tab-utils.js');
+
+    const set = new Set<number>();
+    for (let index = 0; index < 10; index += 1) addBounded(set, index, 3);
+
+    expect(set.size).toBe(3);
+    expect([...set]).toEqual([7, 8, 9]);
+  });
+});
