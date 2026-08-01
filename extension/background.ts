@@ -80,6 +80,36 @@ const queryTabs = (queryInfo: chrome.tabs.QueryInfo) =>
     chrome.tabs.query(queryInfo, resolve);
   });
 
+const POWER_AUTOMATE_URL_PATTERN = /make\.powerautomate\.com|make\.powerapps\.com|flow\.microsoft\.com/i;
+
+const POWER_AUTOMATE_TAB_URLS = [
+  '*://*.make.powerautomate.com/*',
+  '*://*.make.powerapps.com/*',
+  '*://*.flow.microsoft.com/*',
+];
+
+const isPowerAutomateTab = (tab: chrome.tabs.Tab | null | undefined) =>
+  typeof tab?.id === 'number' && POWER_AUTOMATE_URL_PATTERN.test(tab.url || '');
+
+// A service worker has no window of its own, so `currentWindow: true` resolves to
+// nothing whenever the side panel holds focus — which made every "Use as work tab"
+// click throw "No active browser tab was found" and look like a dead button. Ask
+// the last focused window first, then fall back to any open Power Automate tab.
+const findActivePowerAutomateTab = async () => {
+  const activeCandidates = [
+    ...(await queryTabs({ active: true, lastFocusedWindow: true })),
+    ...(await queryTabs({ active: true, currentWindow: true })),
+  ];
+
+  const activeMatch = activeCandidates.find(isPowerAutomateTab);
+
+  if (activeMatch) return activeMatch;
+
+  const openPortalTabs = await queryTabs({ url: POWER_AUTOMATE_TAB_URLS });
+
+  return openPortalTabs.find(isPowerAutomateTab) || null;
+};
+
 const readJsonResponse = async <T>(response: Response) => {
   const text = await response.text();
   return (text ? JSON.parse(text) : {}) as T;
@@ -461,7 +491,7 @@ const maybeSendSession = async (tabId: number, session: Session) => {
 };
 
 const getCurrentBrowserTabFlow = async (context: ContextPayload | null) => {
-  const [activeTab] = await queryTabs({ active: true, currentWindow: true });
+  const activeTab = await findActivePowerAutomateTab();
 
   if (!activeTab?.id) return null;
 
@@ -616,9 +646,9 @@ const resendLastSession = async () => {
     throw new Error('No captured session is stored yet.');
   }
 
-  const activeTab = (await queryTabs({ active: true, currentWindow: true }))[0];
+  const activeTab = await findActivePowerAutomateTab();
   if (!activeTab?.id) {
-    throw new Error('No active browser tab was found.');
+    throw new Error('No open Power Automate tab was found. Open a flow page and try again.');
   }
 
   delete state.lastSentSignatures[activeTab.id];
@@ -627,14 +657,10 @@ const resendLastSession = async () => {
 };
 
 const refreshCurrentTab = async () => {
-  const [tab] = await queryTabs({ active: true, currentWindow: true });
+  const tab = await findActivePowerAutomateTab();
 
   if (!tab?.id) {
-    throw new Error('No active browser tab was found.');
-  }
-
-  if (!/make\.powerautomate\.com|make\.powerapps\.com|flow\.microsoft\.com/i.test(tab.url || '')) {
-    throw new Error('The active tab is not a Power Automate page.');
+    throw new Error('No open Power Automate tab was found. Open a flow page and try again.');
   }
 
   await chrome.tabs.reload(tab.id);

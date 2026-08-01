@@ -180,4 +180,54 @@ describe('stores', () => {
     });
     expect(capturedSessionsStore.listCapturedSessions().map((session) => session.tabId)).toEqual([202, 101]);
   });
+
+  it('falls back to the freshest capture when the selected work tab is gone', async () => {
+    const sessionStore = await import('../server/session-store.js');
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const selectedWorkTabStore = await import('../server/selected-work-tab-store.js');
+
+    await sessionStore.saveSession({ ...validSession, flowId: 'flow-a', tabId: 101 });
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      capturedAt: '2026-04-01T00:05:00.000Z',
+      flowId: 'flow-b',
+      lastSeenAt: '2026-04-01T00:05:00.000Z',
+      tabId: 202,
+    });
+    await selectedWorkTabStore.saveSelectedWorkTab({ selectedAt: '2026-04-01T00:06:00.000Z', tabId: 202 });
+
+    // Closing tab 202 drops its capture and clears the stored selection.
+    await capturedSessionsStore.removeCapturedSession(202);
+    await selectedWorkTabStore.clearSelectedWorkTab();
+
+    expect(selectedWorkTabStore.getSelectedWorkTab()).toMatchObject({ tabId: 101 });
+    expect(sessionStore.getSession()).toMatchObject({ flowId: 'flow-a' });
+  });
+
+  it('prefers a capture that still carries legacy access', async () => {
+    const capturedSessionsStore = await import('../server/captured-sessions-store.js');
+    const selectedWorkTabStore = await import('../server/selected-work-tab-store.js');
+
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      lastSeenAt: '2026-04-01T00:01:00.000Z',
+      legacyApiUrl: 'https://example.api.flow.microsoft.com/',
+      legacyToken: 'Bearer legacy',
+      tabId: 301,
+    });
+    // Newer, but no legacy token - it cannot mint callback URLs.
+    await capturedSessionsStore.upsertCapturedSession({
+      ...validSession,
+      lastSeenAt: '2026-04-01T00:09:00.000Z',
+      tabId: 302,
+    });
+
+    expect(selectedWorkTabStore.getSelectedWorkTab()).toMatchObject({ tabId: 301 });
+  });
+
+  it('reports no selection when nothing has been captured', async () => {
+    const selectedWorkTabStore = await import('../server/selected-work-tab-store.js');
+
+    expect(selectedWorkTabStore.getSelectedWorkTab()).toBeNull();
+  });
 });

@@ -20,6 +20,17 @@ export const sendRuntimeMessage = <T>(message: RuntimeMessage) =>
         return;
       }
 
+      // Every background handler reports failure as `{ error }` on an otherwise
+      // 200-shaped reply. Resolving those as a DashboardPayload fed a payload with
+      // no `status` into deriveDashboardModel, which threw during render and left
+      // the whole panel wedged — every button looked live but did nothing.
+      const errorMessage = (response as { error?: unknown }).error;
+
+      if (typeof errorMessage === 'string' && errorMessage.length > 0) {
+        reject(new Error(errorMessage));
+        return;
+      }
+
       resolve(response as T);
     });
   });

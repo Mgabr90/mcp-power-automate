@@ -145,3 +145,38 @@ describe('isTokenExpired', () => {
     expect(isTokenExpired(token, 200)).toBe(true);
   });
 });
+
+describe('sendRuntimeMessage', () => {
+  const installChromeStub = (response: unknown) => {
+    Object.assign(globalThis, {
+      chrome: {
+        runtime: {
+          lastError: undefined,
+          sendMessage: (_message: unknown, callback: (value: unknown) => void) => callback(response),
+        },
+      },
+      window: {
+        clearTimeout: (handle: number) => clearTimeout(handle),
+        setTimeout: (handler: () => void, timeout?: number) => Number(setTimeout(handler, timeout)),
+      },
+    });
+  };
+
+  it('rejects when the background reports an error instead of a payload', async () => {
+    installChromeStub({ error: 'No open Power Automate tab was found.' });
+    const { sendRuntimeMessage } = await import('../extension/dashboard-client.js');
+
+    await expect(sendRuntimeMessage({ type: 'select-work-tab' })).rejects.toThrow(
+      'No open Power Automate tab was found.',
+    );
+  });
+
+  it('resolves a normal payload untouched', async () => {
+    installChromeStub({ status: { bridge: { ok: true } } });
+    const { sendRuntimeMessage } = await import('../extension/dashboard-client.js');
+
+    await expect(sendRuntimeMessage({ type: 'select-work-tab' })).resolves.toMatchObject({
+      status: { bridge: { ok: true } },
+    });
+  });
+});

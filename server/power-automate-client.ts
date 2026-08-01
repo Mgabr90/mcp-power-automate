@@ -1774,8 +1774,18 @@ export const invokeTrigger = async ({
     });
   }
 
+  let payload = body;
+
+  if (typeof payload === 'string') {
+    try {
+      payload = JSON.parse(payload);
+    } catch {
+      // Keep the raw string if the caller genuinely meant to send one.
+    }
+  }
+
   const response = await fetch(callback.url, {
-    body: JSON.stringify(body),
+    body: JSON.stringify(payload),
     headers: {
       'Content-Type': 'application/json',
     },

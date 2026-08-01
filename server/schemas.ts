@@ -259,7 +259,11 @@ export const triggerCallbackInputSchema = z.object({
 });
 
 export const invokeTriggerInputSchema = z.object({
-  body: z.unknown().optional(),
+  // Typed as an object so the emitted inputSchema carries `type: "object"`.
+  // z.unknown() emits an empty schema, which leads MCP clients to serialize the
+  // value to a string before it reaches the server; Request triggers then reject
+  // it with TriggerInputSchemaMismatch.
+  body: z.record(z.string(), z.unknown()).optional(),
   target: targetRefSchema.optional(),
   triggerName: z.string().trim().min(1).optional(),
 });
