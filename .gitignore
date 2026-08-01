@@ -10,3 +10,6 @@ data/*.json
 !data/.gitkeep
 FLOW_REVIEW.md
 .mcpregistry_*
+
+# Local bridge process logs
+*.log
